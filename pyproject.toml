@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aynime_capture_mac"
+version = "0.1.0"
+description = "ScreenCaptureKit backed drop-in replacement for aynime_capture (macOS only)"
+requires-python = ">=3.11"
+dependencies = [
+  "pyobjc-framework-ScreenCaptureKit",
+  "pyobjc-framework-Quartz",
+  "pyobjc-framework-Cocoa",
+]
+
+[tool.setuptools]
+packages = ["aynime_capture"]
