@@ -23,6 +23,14 @@ MIT ライセンス。API 仕様・docstring は Nu-Pan/aynime_capture（MIT, Co
 pip install -e .
 ```
 
+## 実装状況
+
+| API | 状態 |
+|---|---|
+| `Session`（キャプチャ開始・リングバッファ・静止画取得） | ✅ 実装済み |
+| `Snapshot`（動画キャプチャ用のバッファ固定） | ✅ 実装済み |
+| `set_log_handle` | ✅ no-op として実装済み |
+
 ## API
 
 - `Session(hwnd, duration_in_sec, max_width, max_height)` — `hwnd` は CGWindowID

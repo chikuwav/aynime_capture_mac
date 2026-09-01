@@ -7,6 +7,7 @@ Windows 版（Windows.Graphics.Capture + D3D11 の C++ 実装）と同じ意味�
 
 # std
 from typing import Any, Optional
+import math
 import threading
 import time
 from collections import deque
@@ -395,6 +396,62 @@ class Session:
         return _to_bgr_bytes(frame)
 
 
+def _resolve_index_map(
+    ages_in_sec: list[float],
+    fps: Optional[float],
+    duration_in_sec: Optional[float],
+) -> list[int]:
+    """
+    「ユーザーから見えるフレーム列」から「実際に保持しているフレーム列」への写像を作る。
+
+    ages_in_sec は古い順（経過秒数の降順）に並んでいる前提。
+
+    NOTE
+        fps の指定がある場合、その fps でキャプチャしたかのように見えるように
+        フレームの取捨選択を行う。
+        指定 fps が実際のキャプチャより高いと同じフレームが複数回選ばれるが、
+        Windows 版もそうなっているので重複除去はしない。
+    """
+    # フレームが無いなら空の写像
+    if not ages_in_sec:
+        return []
+
+    # fps の指定が無い場合は恒等写像
+    if fps is None:
+        return list(range(len(ages_in_sec)))
+
+    # ユーザーから見えるフレーム列の秒数を解決
+    raw_duration_in_sec = max(ages_in_sec) - min(ages_in_sec)
+    if duration_in_sec is None:
+        user_duration_in_sec = raw_duration_in_sec
+    else:
+        user_duration_in_sec = duration_in_sec
+
+    # ユーザーから見えるフレーム列の枚数を解決
+    # NOTE
+    #   Windows 版は std::round なので 0.5 は必ず切り上げになる。
+    #   Python の round は偶数丸めで挙動が違うので、同じ丸め方を明示的に書く。
+    num_user_frames = math.floor(user_duration_in_sec * fps + 0.5)
+
+    # 目標時刻に最も近いフレームを選ぶ
+    # NOTE
+    #   i = 0 が最も古い。i が増えるほど新しくなる。
+    index_map: list[int] = []
+    for i in range(num_user_frames):
+        target_age_in_sec = (
+            user_duration_in_sec
+            * float(num_user_frames - i - 1)
+            / float(num_user_frames)
+        )
+        index_map.append(
+            min(
+                range(len(ages_in_sec)),
+                key=lambda j: abs(ages_in_sec[j] - target_age_in_sec),
+            )
+        )
+    return index_map
+
+
 class Snapshot:
     """
     キャプチャバッファスナップショット
@@ -409,20 +466,92 @@ class Snapshot:
         fps: Optional[float] = None,
         duration_in_sec: Optional[float] = None,
     ) -> None:
-        raise NotImplementedError("macOS 版 Snapshot は未実装（M2 で実装）")
+        """
+        セッションのフレームバッファのスナップショットを取得する。
+
+        Args:
+            session: 取得元のキャプチャセッション。
+            fps: 目標フレームレート。None ならキャプチャされたままの間隔を使う。
+            duration_in_sec: 最新フレームから遡って含める秒数。None なら全部。
+        """
+        # セッションが停止済みならエラー
+        if session._stream is None:
+            raise RuntimeError("Session Already Stopped")
+
+        # 「現在」を確定させる
+        now_in_sec = time.monotonic()
+
+        # スナップショットする区間長を解決
+        # NOTE
+        #   None は「全部」の意味。保持秒数を超える指定は保持秒数に丸める。
+        if duration_in_sec is None:
+            request_duration_in_sec = math.inf
+        else:
+            request_duration_in_sec = max(duration_in_sec, 0.0)
+        actual_duration_in_sec = min(request_duration_in_sec, session._hold_in_sec)
+
+        # 区間内のフレームを抜き出して固定する
+        # NOTE
+        #   Session 側の挙動（可能な限り１枚は有効なフレームを残す）と揃えたいので、
+        #   ここでも、たとえ指定区間の外でも１フレームは残す。
+        # NOTE
+        #   フレームはバックグラウンドスレッドから追加され続けるので、
+        #   ロックを取ってコピーを作り、以降はそのコピーだけを見る。
+        with session._guard:
+            entries = [
+                (frame, now_in_sec - time_in_sec)
+                for frame, time_in_sec in session._frames
+                if (now_in_sec - time_in_sec) <= actual_duration_in_sec
+            ]
+            if not entries and session._frames:
+                frame, time_in_sec = session._frames[-1]
+                entries = [(frame, now_in_sec - time_in_sec)]
+
+        # 古い順（経過秒数の降順）に並べる
+        # NOTE
+        #   動画として再生する順序になる。
+        entries.sort(key=lambda entry: entry[1], reverse=True)
+
+        # 固定したフレームと、そこへの写像を保持する
+        self._frames = [entry[0] for entry in entries]
+        self._index_map = _resolve_index_map(
+            [entry[1] for entry in entries], fps, duration_in_sec
+        )
 
     def __enter__(self) -> "Snapshot":
+        """
+        コンテキストマネージャ開始。
+        """
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool:
+        """
+        コンテキストマネージャ終了。
+
+        NOTE
+            Windows 版はここで保持しているフレームを解放する。同じ挙動にする。
+        """
+        self._frames = []
+        self._index_map = []
         return False
 
     @property
     def size(self) -> int:
-        raise NotImplementedError
+        """
+        スナップショット上のフレーム枚数。
+        """
+        return len(self._index_map)
 
     def GetFrame(self, frame_index: int) -> tuple[int, int, bytes]:
-        raise NotImplementedError
+        """
+        指定インデックスのフレームを取得する。
+
+        Returns:
+            (Width, Height, Frame Raw Buffer) のタプル。
+        """
+        if frame_index < 0 or frame_index >= len(self._index_map):
+            raise IndexError(f"frame_index Out of Bounds ({frame_index})")
+        return _to_bgr_bytes(self._frames[self._index_map[frame_index]])
 
 
 def _fetch_shareable_content():
