@@ -9,7 +9,10 @@ import 名は Windows 版と同じ `aynime_capture` なので、呼び出し側�
 ## 由来とライセンス
 
 MIT ライセンス。API 仕様・docstring は Nu-Pan/aynime_capture（MIT, Copyright (c) 2025 NU-Pan）に由来する。
-著作権表示は LICENSE に保持している。
+著作権表示は LICENSE に保持している。原作者の許可を得て公開している。
+
+**原作リポジトリへは変更を送らない。** このリポジトリのコードは AI が生成したもので、
+原作の開発規約が AI エージェントによるファイル編集を禁じているため。
 
 ## 必須環境
 
