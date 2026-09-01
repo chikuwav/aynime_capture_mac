@@ -48,10 +48,16 @@ _WINDOW_TRACK_INTERVAL_IN_SEC = 0.5
 
 # キャプチャの上限フレームレート
 # NOTE
-#   Windows 版はウィンドウの更新があった時だけフレームが届く。
-#   ScreenCaptureKit も内容に変化がないフレームは complete 以外の状態で届くので、
-#   それを捨てることで同じ挙動になる。
-#   ここでの指定は、その上での上限値。
+#   Windows 版はディスプレイのリフレッシュレートぶんフレームが届くので、
+#   それに合わせて 60 にしてある。
+# NOTE
+#   実測では、ウィンドウの内容が変わらなくても complete のフレームが
+#   この上限いっぱいで届く（静止したウィンドウで 3 秒 172 枚、
+#   うち 170 枚が直前のフレームとバイト単位で一致）。
+#   ディスプレイ全体のフィルタを使う以上、
+#   他のウィンドウの変化でも complete になるため。
+#   結果としてバッファは 5 秒で 2 GB 前後になるが、
+#   原作も同じだけのフレームを保持するので、ここは原作に合わせたままにする。
 _MAX_FRAME_RATE = 60
 
 
@@ -171,8 +177,10 @@ class _StreamOutput(NSObject):
         if attachments:
             status = dict(attachments[0]).get("SCStreamUpdateFrameStatus", 0)
             # NOTE
-            #   内容に変化がないフレームは complete 以外の状態で届く。
-            #   ここで捨てることで「更新があった時だけ」という挙動になる。
+            #   complete 以外（idle / blank / suspended など）は
+            #   中身が無いか信用できないので捨てる。
+            #   なお、これは「更新があった時だけ拾う」フィルタにはならない。
+            #   内容が変わらなくても complete で届くことを実測で確認している。
             if status != _FRAME_STATUS_COMPLETE:
                 return
         pixel_buffer = CMSampleBufferGetImageBuffer(sample_buffer)
